@@ -116,6 +116,32 @@ age_IQR_value = age_Q3 - age_Q1
 age_outlier_condition = music_sample$age < (age_Q1 - 1.5 * age_IQR_value) | music_sample$age > (age_Q3 + 1.5 * age_IQR_value)
 cat("Number of age outliers:", sum(age_outlier_condition), "\n") # 26
 
+music_sample$age_group
+
+music_sample <- music_sample %>%
+  mutate(age_group = cut(age,
+                         breaks = c(0, 12, 18, 25, 35, 50, Inf),
+                         labels = c("0-12", "13-18", "19-25",
+                                    "26-35", "36-50", "50+"),
+                         include.lowest = TRUE))
+
+p_age_profile <- ggplot(music_sample,
+                        aes(x = emotional_intensity,
+                            y = liked,
+                            color = age_group)) +
+  stat_smooth(method = "glm",
+              method.args = list(family = "binomial"),
+              se = FALSE) +
+  labs(title = "Probability of Liking vs Emotional Intensity by Age Group",
+       x = "Emotional Intensity",
+       y = "Probability of Liking",
+       color = "Age Group") +
+  theme_minimal()
+
+ggsave("emotion_vs_satisfaction_by_age.png",
+       p_age_profile, width = 8, height = 5)
+
+
 # Gender distribution
 table(music_sample$gender) #Male Female 
                           # 815    685 
@@ -129,6 +155,23 @@ p_gender <- ggplot(music_sample, aes(x = gender, fill = gender)) +
   labs(title = "Gender Distribution", x = "Gender", y = "Count") +
   theme_minimal()
 ggsave("barplot_gender.png", p_gender, width = 5, height = 5)
+
+p_gender_profile <- ggplot(music_sample,
+                           aes(x = emotional_intensity,
+                               y = liked,
+                               color = gender)) +
+  stat_smooth(method = "glm",
+              method.args = list(family = "binomial"),
+              se = FALSE) +
+  labs(title = "Probability of Liking vs Emotional Intensity by Gender",
+       x = "Emotional Intensity",
+       y = "Probability of Liking",
+       color = "Gender") +
+  theme_minimal()
+
+ggsave("emotion_vs_satisfaction_by_gender.png",
+       p_gender_profile, width = 7, height = 5)
+
 
 # Mother tongue distribution
 table(music_sample$mother.tongue)
@@ -145,6 +188,36 @@ p_mother_tongue <- ggplot(music_sample, aes(x = mother.tongue)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ggsave("barplot_mother_tongue.png", p_mother_tongue, width = 7, height = 5)
+
+# Find top 5 mother tongues
+top5_mother <- names(sort(table(music_sample$mother.tongue), decreasing = TRUE)[1:5])
+
+#  top5 + Other
+music_sample <- music_sample %>%
+  mutate(mother_tongue_group = ifelse(mother.tongue %in% top5_mother,
+                                      as.character(mother.tongue),
+                                      "Other"))
+
+music_sample$mother_tongue_group <- factor(music_sample$mother_tongue_group,
+                                           levels = c(top5_mother, "Other"))
+
+# Plot: Emotional Intensity → Probability of Liking by Mother Tongue
+p_mother_profile <- ggplot(music_sample,
+                           aes(x = emotional_intensity,
+                               y = liked,
+                               color = mother_tongue_group)) +
+  stat_smooth(method = "glm",
+              method.args = list(family = "binomial"),
+              se = FALSE) +
+  labs(title = "Probability of Liking vs Emotional Intensity by Mother Tongue",
+       x = "Emotional Intensity",
+       y = "Probability of Liking",
+       color = "Mother Tongue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+ggsave("emotion_vs_satisfaction_by_mother_tongue.png",
+       p_mother_profile, width = 8, height = 5)
 
 # Genre distribution
 table(music_sample$genre)
@@ -165,6 +238,21 @@ p_genre <- ggplot(music_sample, aes(x = genre, fill = genre)) +
   theme_minimal()
 ggsave("barplot_genre.png", p_genre, width = 7, height = 5)
 
+p_genre_profile <- ggplot(music_sample,
+                          aes(x = emotional_intensity,
+                              y = liked,
+                              color = genre)) +
+  stat_smooth(method = "glm",
+              method.args = list(family = "binomial"),
+              se = FALSE) +
+  labs(title = "Probability of Liking vs Emotional Intensity by Genre",
+       x = "Emotional Intensity",
+       y = "Probability of Liking",
+       color = "Genre") +
+  theme_minimal()
+
+ggsave("emotion_vs_satisfaction_by_genre.png",
+       p_genre_profile, width = 7, height = 5)
 
 # ----- EMOTIONAL INTENSITY -----
 summary(music_sample$emotional_intensity)
