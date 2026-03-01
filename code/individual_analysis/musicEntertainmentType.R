@@ -1,6 +1,4 @@
 # ============================================================================
-# COMPLETE ANALYSIS SCRIPT - MUSIC (EMOTIFY DATASET)
-# ============================================================================
 # Activity: Songs/Music
 # Dataset: Emotify - Induced Musical Emotion Dataset
 # Statement: "Audiences who feel emotionally connected to content report 
