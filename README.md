@@ -38,7 +38,7 @@ The project implements three levels of statistical analysis as required by the a
 - Comparative visualization
 
 ## 📥 Data Sources
-- Dataset 1:Movies -
+- Dataset 1:Movies - https://www.kaggle.com/datasets/sayeeduddin/netflix-2025user-behavior-dataset-210k-records
 - Dataset 2: Social Media - 
 - Dataset 3: Musc -
 
