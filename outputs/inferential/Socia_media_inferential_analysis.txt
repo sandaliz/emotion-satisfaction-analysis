@@ -1,0 +1,305 @@
+# Load required libraries
+library(tidyverse)  # For data manipulation
+library(lubridate)  # For date handling
+library(stringr)    # For text cleaning
+library(janitor)    # For cleaning column names
+library(dplyr)
+library(e1071)      #for calculate the skewness
+library(ggplot2)
+library(corrplot)
+library(tidyr)      #for break comments into words
+library(tidytext)
+library(gridExtra)
+library(car)
+library(effectsize)
+library(caret)
+
+
+setwd("C:\\Users\\USER\\Documents\\Y3S1 works")
+getwd()
+
+# Load your data sets
+data <- read.csv("social_media_dataset.csv") #raw dataset
+View(data)
+
+#Check no of rows that in cleaned data set
+cat("Initial number of rows: ",nrow(data) , "\n")
+
+# Create a copy for cleaning
+data_clean <- data 
+
+# Clean column names (snake_case consistent format)
+data_clean <- clean_names(data_clean)
+str(data_clean)
+
+#Remove unwanted columns
+data_clean <- subset(data_clean, select = -c(is_sponsored ,sponsor_name  ,sponsor_category,disclosure_location,content_url ))
+
+#Replace missing texts with NA
+data_clean$hashtags[data_clean$hashtags %in% c("", "N/A", "NULL", "Unknown", "?")] <- NA
+data_clean$comments_text[data_clean$comments_text %in% c("", "N/A", "NULL", "Unknown", "?")] <- NA
+data_clean$audience_gender_distribution[data_clean$audience_gender_distribution %in% c("unknown","non-binary" )] <- NA
+
+#Remove rows with missing texts
+data_clean <- na.omit(data_clean)
+cat("Number of rows after cleaning: ", nrow(data_clean) , "\n")
+
+#Fix data types
+data_clean <- data_clean %>% mutate(post_date = as.Date(post_date, "%m/%d/%y"))
+data_clean$audience_age_distribution <- as.factor(data_clean$audience_age_distribution)
+data_clean$audience_gender_distribution <- as.factor(data_clean$audience_gender_distribution )
+data_clean$audience_location <- as.factor(data_clean$audience_location)
+data_clean$platform <- as.factor(data_clean$platform)
+
+#Save clean data set
+write.csv(data_clean, "cleaned_social_media_dataset.csv", row.names = FALSE)
+
+#Load cleaned dataset
+data1 <- read.csv("cleaned_social_media_dataset.csv") 
+
+#Make duplicate dataset from cleaned dataset
+data_dup <- data1
+
+#Ensure same sample every time
+set.seed(123) 
+
+#Take random sample
+sample_data <- data_dup %>% sample_n(1500)
+
+
+# Explore the structure of sample
+str(sample_data)
+summary(sample_data)
+head(sample_data)
+
+#Check basic info
+cat("Dataset dimensions: ", dim(sample_data), "\n")
+cat("Column names: ", names(sample_data), "\n")
+cat("Duplicate rows: ", sum(duplicated(sample_data)), "\n")
+cat("Missing values: ", colSums(is.na(sample_data)), "\n")
+
+
+#Print(cleaning_log)
+View(sample_data)
+
+
+#Create emotional connection variable
+#Remove punctuation and convert to lowercase
+sample_data$comments_text <- tolower(sample_data$comments_text)
+
+#Remove punctuation but keep spaces (replace punctuation with space)
+sample_data$comments_text <- str_replace_all(sample_data$comments_text, "[^a-z\\s]", "")
+
+# Remove extra spaces 
+sample_data$comments_text <- str_squish(sample_data$comments_text)
+
+#Splits comments into individual words
+comments_words <- sample_data %>% unnest_tokens(word, comments_text)
+
+#Load sentiment dictonary (using Bing sentiment lexicon)
+bing <- get_sentiments("bing")
+head(bing)
+
+#Sentiment score calculation
+sentiment_data <- comments_words %>% 
+  inner_join(bing, by="word") %>%
+  count(content_id, sentiment) %>% 
+  pivot_wider(names_from = sentiment,
+              values_from = n, 
+              values_fill = list(n = 0) )
+
+# Ensure positive and negative columns exist
+if(!"positive" %in% colnames(sentiment_data)) {
+  sentiment_data$positive <- 0
+}
+
+if(!"negative" %in% colnames(sentiment_data)) {
+  sentiment_data$negative <- 0
+}
+
+#Create emotional connection variable
+colnames(sentiment_data)
+sentiment_data$sentiment_score <-sentiment_data$positive - sentiment_data$negative
+
+#Merge with main data set
+sample_data <- left_join(sample_data, sentiment_data, by = "content_id")
+
+#Replace NA with 0
+sample_data$positive[is.na(sample_data$positive)] <- 0
+sample_data$negative[is.na(sample_data$negative)] <- 0
+sample_data$sentiment_score[is.na(sample_data$sentiment_score)] <- 0
+
+#Define emotional connection
+sample_data$emotional_connection <- sample_data$sentiment_score
+
+#Second Emotional Variable
+#Normalize 
+sample_data$views_scaled <- scale(sample_data$views)
+
+#Emotion type detection (NRC emotion lexicon)
+nrc <- get_sentiments("nrc")
+emotion_data <- comments_words %>% inner_join(nrc, by="word") %>% count(sentiment)
+emotion_data
+
+#Emotion plot
+ggplot(emotion_data, aes(x=sentiment, y = n, fill = sentiment))+
+  geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  labs(title = "Emotion Distribution")
+
+#Create satisfaction variable
+sample_data$satisfaction <- sample_data$likes + sample_data$shares + sample_data$comments_count
+#normalize
+sample_data$satisfaction_scaled <- scale(sample_data$satisfaction)
+
+#============================================================
+#Inferential analysis
+#============================================================
+
+#create high and low emotional engagement groups(median split)
+emotional_median <- median(sample_data$emotional_connection, na.rm = TRUE)
+sample_data$emotional_group <- ifelse(sample_data$emotional_connection > emotional_median, 
+                                      "High", "Low")
+sample_data$emotional_group <- factor(sample_data$emotional_group, levels = c("Low", "High"))
+
+table(sample_data$emotional_group)
+# Low    High 
+# 913    587
+
+#pearson correlation (0.5 -> strong relationship)
+cor_test <- cor.test(
+  sample_data$emotional_connection,  # Changed from confidence_interval
+  sample_data$satisfaction,
+  method = "pearson", 
+  conf.level = 0.95
+)
+
+cor_test
+
+
+print("CORRELATION RESULTS:")
+#correlation results
+#print(paste("Pearson: r =", round(cor_test$estimate, 3), 
+ #           ", p =", round(cor_test$p.value, 4)))
+
+print(paste("Pearson: r =", round(cor_test$estimate, 3),
+            ", 95% CI [", round(cor_test$conf.int[1], 3), 
+            ", ", round(cor_test$conf.int[2], 3), "]"))
+
+# "Pearson: r = 0.016 , 95% CI [ -0.035 ,  0.066 ]"
+
+# Check if variances are equal
+var_test <- leveneTest(satisfaction ~ emotional_group, data = sample_data)
+
+# Run t-test
+t_test <- t.test(sample_data$satisfaction ~ sample_data$emotional_group, 
+                 data = sample_data,
+                 var.equal = var_test$`Pr(>F)`[1] > 0.05)
+
+# Calculate effect size (Cohen's d)
+cohen_d <- cohens_d(sample_data$satisfaction ~ sample_data$emotional_group, data = sample_data)
+print(cohen_d)
+
+#Cohen's d = -0.05,  95% CI = [-0.15, 0.05]
+
+# Group statistics
+group_stats <- sample_data %>%
+  group_by(emotional_group) %>%  # CORRECT
+  summarise(
+    n = n(),
+    mean_sat = mean(satisfaction, na.rm = TRUE),  
+    sd_sat = sd(satisfaction, na.rm = TRUE)       
+  )
+
+print("T-TEST RESULTS:")
+print(paste("t =", round(t_test$statistic, 3), 
+            ", df =", round(t_test$parameter, 1),
+            ", p =", round(t_test$p.value, 4)))
+
+# "t = -0.943 , df = 1498 , p = 0.3459"
+
+print(paste("Cohen's d =", round(cohen_d$Cohens_d, 3))) # -0.05
+print("Group means: ")
+print(group_stats)
+
+# emotional_group     n    mean_sat   sd_sat
+# <fct>             <int>   <dbl>     <dbl>
+# 1 Low               913    2009.   43.8
+# 2 High              587    2012.   45.5
+
+#---------------------------------------------------------------------
+#Linear regression
+#fit regression model
+
+model <- lm(satisfaction ~ emotional_connection, data = sample_data)
+summary_model <- summary(model)
+
+print("REGRESSION RESULTS:")
+print(paste("R² =", round(summary_model$r.squared, 3)))       #R² = 0
+print(paste("F =", round(summary_model$fstatistic[1], 3),     #F= 0.373
+            ", p =", round(pf(summary_model$fstatistic[1],    #p = 0.5415
+                              summary_model$fstatistic[2], 
+                              summary_model$fstatistic[3], 
+                              lower.tail = FALSE), 4)))
+print("Coefficients:")
+print(round(coef(model),3))
+
+#(Intercept)     emotional_connection 
+# 2010.059                0.639
+
+#summary table
+
+results <- data.frame(
+  Test = c("Pearson", "T-test", "Regression"),
+  Statistic = c(
+    paste("r =", round(cor_test$estimate, 3)),
+    paste("t =", round(t_test$statistic, 3)),
+    paste("F =", round(summary_model$fstatistic[1], 3))
+  ),
+  P_value = c(
+    round(cor_test$p.value, 4),
+    round(t_test$p.value, 4),
+    round(pf(summary_model$fstatistic[1], 
+             summary_model$fstatistic[2], 
+             summary_model$fstatistic[3], 
+             lower.tail = FALSE), 4)
+  ),
+  Effect_Size = c(
+    paste("r² =", round(cor_test$estimate^2, 3)),
+    paste("d =", round(cohen_d$Cohens_d, 3)),
+    paste("R² =", round(summary_model$r.squared, 3))
+  ),
+  Significant = c(
+    cor_test$p.value < 0.05,
+    t_test$p.value < 0.05,
+    pf(summary_model$fstatistic[1], 
+       summary_model$fstatistic[2], 
+       summary_model$fstatistic[3], 
+       lower.tail = FALSE) < 0.05
+  )
+)
+
+print("HYPOTHESIS TESTING SUMMARY")
+print("H0 : No relationship between emotional connection and satisfaction")
+print("H1 : Positive relationship exists")
+print(results)
+
+
+#  Test       Statistic     P_value   Effect_Size Significant
+# Pearson     r = 0.016     0.5415      r² = 0       FALSE
+# T-test      t = -0.943    0.3459      d = -0.05       FALSE
+# Regression  F = 0.373     0.5415      R² = 0       FALSE
+
+#simple plot
+# Effect size plot
+effects <- data.frame(
+  Test = c("Pearson r", "Cohen's d", "R²"),
+  Value = c(cor_test$estimate, cohen_d$Cohens_d, summary_model$r.squared)
+)
+
+ggplot(effects, aes(x = Test, y = Value, fill = Test)) +
+  geom_col(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Effect Sizes", y = "Effect Size") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
