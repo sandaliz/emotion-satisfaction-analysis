@@ -1,13 +1,30 @@
-# Load libraries
+# ============================================================================
+# MOVIE DATASET ANALYSIS
+# TPSM Assignment 2026
+# ============================================================================
+# Dataset: Movie Data
+# Files: movies.csv, recommendation_logs.csv, reviews.csv, 
+#        search_logs.csv, users.csv, watch_history.csv
+# ============================================================================
+
+# ============================================================================
+# 1. LIBRARY LOADING
+# ============================================================================
+
 library(tidyverse)
 library(psych)
 library(lm.beta)
 library(corrplot)
 library(ggplot2)
 library(dplyr)
+library(ResourceSelection)
 
-# Set working directory
+# ============================================================================
+# 2. DATASET LOADING
+# ============================================================================
+
 setwd("G:\\TPSM_Assignment_2026\\data\\raw\\MovieData")
+set.seed(123)
 
 # Import all files
 movies <- read.csv("movies.csv", stringsAsFactors = FALSE)
@@ -17,7 +34,15 @@ search_log <- read.csv("search_logs.csv", stringsAsFactors = FALSE)
 users <- read.csv("users.csv", stringsAsFactors = FALSE)
 watch_history <- read.csv("watch_history.csv", stringsAsFactors = FALSE)
 
-# Process users file demographics
+# ============================================================================
+# 3. DATA CLEANING AND PROCESSING
+# ============================================================================
+
+cat("\n==================================================\n")
+cat("DATA CLEANING AND PROCESSING\n")
+cat("==================================================\n")
+
+# 3.1 Process users file demographics
 users_clean <- users %>%
   select(user_id, age, gender, country) %>%
   mutate(
@@ -48,46 +73,49 @@ users_clean <- users %>%
     country = trimws(as.character(country))
   )
 
-# Process REVIEWS file for Emotional Connection
+# 3.2 Process REVIEWS file for Emotional Connection
 reviews_clean <- reviews %>%
   select(user_id, movie_id, rating, helpful_votes, sentiment_score, review_date) %>%
   mutate(
-    rating = as.numeric(rating),
+    rating = as.numeric(rating), # 1-5 scale
     helpful_votes = as.numeric(helpful_votes),
-    sentiment_score = as.numeric(sentiment_score),
+    sentiment_score = as.numeric(sentiment_score),# 0-1 scale
     
-    # FIX 1: Simple arithmetic instead of case_when
-    emotional_score = (sentiment_score * 5) + rating,
+    # Formula: (sentiment_score * 4) + 1  converts 0-1 to 1-5
+    emotional_intensity = (sentiment_score * 4) + 1,
     
-    # Cap between 0-10
-    emotional_score = pmax(0, pmin(10, emotional_score)),
+    # Cap between 1-5
+    emotional_intensity = pmax(1, pmin(5, emotional_intensity)),
     
     review_year = lubridate::year(as.Date(review_date))
   ) %>%
-  filter(!is.na(emotional_score))
+  filter(!is.na(emotional_intensity))
 
-# Aggregate by user - emotional connection
+cat("\nEmotional Intensity after rescaling (should be 1-5):\n")
+cat("Range:", range(reviews_clean$emotional_intensity), "\n")     # min=1 max=5
+cat("Mean:", round(mean(reviews_clean$emotional_intensity), 2), "\n")   # Mean: 3.54
+
+# 3.3 Aggregate by user - emotional intensity
 user_emotional <- reviews_clean %>%
   group_by(user_id) %>%
   summarise(
-    emotional_connection = mean(emotional_score, na.rm = TRUE),
-    emotional_sd = sd(emotional_score, na.rm = TRUE),
-    emotional_min = min(emotional_score, na.rm = TRUE),
-    emotional_max = max(emotional_score, na.rm = TRUE),
+    emotional_intensity = mean(emotional_intensity, na.rm = TRUE),
+    emotional_sd = sd(emotional_intensity, na.rm = TRUE),
+    emotional_min = min(emotional_intensity, na.rm = TRUE),
+    emotional_max = max(emotional_intensity, na.rm = TRUE),
     num_reviews = n(),
     avg_rating_given = mean(rating, na.rm = TRUE),
     avg_sentiment = mean(sentiment_score, na.rm = TRUE),
     total_helpful_votes = sum(helpful_votes, na.rm = TRUE),
     first_review_year = min(review_year, na.rm = TRUE),
     last_review_year = max(review_year, na.rm = TRUE),
-    pct_high_sentiment = mean(sentiment_score > 0.7, na.rm = TRUE) * 100,
-    pct_low_sentiment = mean(sentiment_score < 0.3, na.rm = TRUE) * 100
+    .groups = 'drop'
   ) %>%
   filter(num_reviews >= 3, emotional_sd > 0 | is.na(emotional_sd))
 
-cat("Users with emotional connection scores:", nrow(user_emotional), "\n")  #1709
+cat("Users with emotional intensity scores:", nrow(user_emotional), "\n")  # 1713
 
-# Process WATCH_HISTORY file for Satisfaction
+# 3.4 Process WATCH_HISTORY file for Satisfaction
 watch_clean <- watch_history %>%
   select(user_id, movie_id, watch_date, user_rating, watch_duration_minutes, 
          progress_percentage, device_type, location_country) %>%
@@ -109,7 +137,7 @@ watch_clean <- watch_history %>%
   ) %>%
   filter(!is.na(satisfaction))
 
-# Aggregate by user - satisfaction
+# 3.5 Aggregate by user - satisfaction
 user_satisfaction <- watch_clean %>%
   group_by(user_id) %>%
   summarise(
@@ -131,55 +159,54 @@ user_satisfaction <- watch_clean %>%
   ) %>%
   filter(num_ratings >= 3, satisfaction_sd > 0 | is.na(satisfaction_sd))
 
-# Combine all files into master dataset
+# 3.6 Combine all files into master dataset
 master_data <- users_clean %>%
   left_join(user_emotional, by = "user_id") %>%
   left_join(user_satisfaction, by = "user_id")
 
-# FIX 2: Handle duplicates in user_genres - ROBUST VERSION
-
+# 3.7 Process user_genres data (clean duplicates)
 cat("\n--- Cleaning user_genres data ---\n")
 
-# Step 1: Check original sizes
-cat("Original watch_history rows:", nrow(watch_history), "\n")  #105000 
-cat("Original movies rows:", nrow(movies), "\n")  #1040
+# Check original sizes
+cat("Original watch_history rows:", nrow(watch_history), "\n")  # 105000 
+cat("Original movies rows:", nrow(movies), "\n")  # 1040
 
-# Step 2: Clean watch_history - remove duplicates
+# Clean watch_history - remove duplicates
 watch_history_clean <- watch_history %>%
   distinct(user_id, movie_id, .keep_all = TRUE)
 
 cat("watch_history after deduplication:", nrow(watch_history_clean), "rows (", 
-    nrow(watch_history) - nrow(watch_history_clean), "duplicates removed)\n")  # 99470 rows ( 5530 duplicates removed)
+    nrow(watch_history) - nrow(watch_history_clean), "duplicates removed)\n")  # 99470 rows
 
-# Step 3: Clean movies - ensure unique movie_ids
+# Clean movies - ensure unique movie_ids
 movies_clean <- movies %>%
   distinct(movie_id, .keep_all = TRUE) %>%
   select(movie_id, genre_primary)
 
 cat("movies after deduplication:", nrow(movies_clean), "rows (", 
-    nrow(movies) - nrow(movies_clean), "duplicates removed)\n")  #1000 rows ( 40 duplicates removed)
+    nrow(movies) - nrow(movies_clean), "duplicates removed)\n")  # 1000 rows
 
-# Step 4: Check for missing genres
+# Check for missing genres
 movies_with_genre <- movies_clean %>%
   filter(!is.na(genre_primary) & genre_primary != "")
 
 cat("movies with valid genre:", nrow(movies_with_genre), "rows (", 
-    nrow(movies_clean) - nrow(movies_with_genre), "without genre)\n")  #1000 rows ( 0 without genre)
+    nrow(movies_clean) - nrow(movies_with_genre), "without genre)\n")  # 1000 rows
 
-# Step 5: Perform join
+# Perform join
 user_genres_raw <- watch_history_clean %>%
   left_join(movies_with_genre, by = "movie_id", relationship = "many-to-many")
 
-cat("After join:", nrow(user_genres_raw), "rows\n") #99470 rows
+cat("After join:", nrow(user_genres_raw), "rows\n") # 99470 rows
 
-# Step 6: Remove movies without genre
+# Remove movies without genre
 user_genres_with_genre <- user_genres_raw %>%
   filter(!is.na(genre_primary))
 
 cat("After removing missing genres:", nrow(user_genres_with_genre), "rows (", 
-    nrow(user_genres_raw) - nrow(user_genres_with_genre), "removed)\n")  #99470 rows ( 0 removed)
+    nrow(user_genres_raw) - nrow(user_genres_with_genre), "removed)\n")  # 99470 rows
 
-# Step 7: Get preferred genre per user
+# Get preferred genre per user
 user_genres <- user_genres_with_genre %>%
   group_by(user_id, genre_primary) %>%
   summarise(genre_count = n(), .groups = 'drop') %>%
@@ -189,7 +216,7 @@ user_genres <- user_genres_with_genre %>%
 
 cat("Final user_genres created with", nrow(user_genres), "users\n") # 10000 users
 
-# Step 8: Show top genres
+# Show top genres
 cat("\nTop 10 preferred genres:\n")
 user_genres %>%
   count(preferred_genre) %>%
@@ -202,10 +229,10 @@ master_data <- master_data %>%
   left_join(user_genres, by = "user_id", relationship = "many-to-many") %>%
   distinct(user_id, .keep_all = TRUE)  # Keep one row per user
 
-# Final filtering
+# 3.8 Final filtering
 master_data_final <- master_data %>%
   filter(
-    !is.na(emotional_connection),
+    !is.na(emotional_intensity),
     !is.na(satisfaction),
     !is.na(age),
     !is.na(gender),
@@ -213,22 +240,76 @@ master_data_final <- master_data %>%
     num_ratings >= 3
   )
 
-cat("\nFinal dataset size:", nrow(master_data_final), "users\n")  #513 users
+write.csv(master_data_final, "Cleaned_movie_dataset.csv", row.names = FALSE)
 
-# AFTER your data cleaning (with your 482 rows)
+cat("\nFinal dataset size:", nrow(master_data_final), "users\n")  # 513 users
+
+# ============================================================================
+# 4. CREATE BOOTSTRAP SAMPLE
+# ============================================================================
+
 set.seed(123)
 
 # Create bootstrap sample (sampling WITH replacement)
 movie_1500 <- master_data_final %>%
   sample_n(size = 1500, replace = TRUE)
+write.csv(movie_1500, "Sample_movie_dataset.csv", row.names = FALSE)
 
+# Check if sample is representative
+cat("\nPopulation vs Sample comparison:\n")
+cat("Population mean emotional intensity:", round(mean(master_data_final$emotional_intensity), 2), "\n")    # 3.55
+cat("Sample mean emotional intensity:", round(mean(movie_1500$emotional_intensity), 2), "\n")               # 3.55
+cat("Population mean satisfaction:", round(mean(master_data_final$satisfaction), 2), "\n")                  # 3.36
+cat("Sample mean satisfaction:", round(mean(movie_1500$satisfaction), 2), "\n")                             # 3.38
 
+# ============================================================================
+# 5. CREATE ADDITIONAL VARIABLES FOR ANALYSIS
+# ============================================================================
 
-##### DESCRPTIVE ANALYSIS #####
+movie_1500 <- movie_1500 %>%
+  mutate(
+    # Standardized variables
+    emotional_intensity_std = as.numeric(scale(emotional_intensity)),
+    satisfaction_std = as.numeric(scale(satisfaction)),
+    age_std = as.numeric(scale(age)),
+    
+    # Binary satisfaction for additional analyses (median split)
+    satisfaction_binary = ifelse(satisfaction > median(satisfaction, na.rm = TRUE), 1, 0),
+    
+    # Emotional intensity groups for t-test (median split)
+    emotional_median = median(emotional_intensity, na.rm = TRUE),
+    
+    # Dummy variables for regression
+    gender_male = ifelse(gender == "Male", 1, 0),
+    gender_other = ifelse(gender == "Other/Not Specified", 1, 0),
+    
+    # Age group dummies (reference: 5-12)
+    age_13_18 = ifelse(age_group == "13-18", 1, 0),
+    age_19_25 = ifelse(age_group == "19-25", 1, 0),
+    age_26_35 = ifelse(age_group == "26-35", 1, 0),
+    age_36_50 = ifelse(age_group == "36-50", 1, 0),
+    age_50plus = ifelse(age_group == "50+", 1, 0)
+  )
 
-# PART 1 -DEMOGRAPHIC DESCRIPTION
+# Verify scales
+cat("\n=== SCALE VERIFICATION (Should be 1-5) ===\n")
+cat("Emotional Intensity - Range:", range(movie_1500$emotional_intensity), "\n")  # Range: 1.912 4.82 
+cat("Satisfaction - Range:", range(movie_1500$satisfaction), "\n")               # Range: 1.333333 5
 
-# Age distribution
+# ============================================================================
+# 6. DESCRIPTIVE ANALYSIS
+# ============================================================================
+
+cat("\n==================================================\n")
+cat("DESCRIPTIVE ANALYSIS\n")
+cat("==================================================\n")
+
+setwd("G:\\TPSM_Assignment_2026\\outputs\\descriptive\\Movie_Descriptive")
+
+# 6.1 DEMOGRAPHIC DESCRIPTION
+# ----------------------------------------------------------------------------
+
+# Age statistics
 age_stats <- movie_1500 %>%
   summarise(
     mean_age = mean(age, na.rm = TRUE),
@@ -237,156 +318,163 @@ age_stats <- movie_1500 %>%
     max_age = max(age, na.rm = TRUE),
     median_age = median(age, na.rm = TRUE)
   )
-print("Age Statistics:")
-print(age_stats)  # mean_age  sd_age min_age max_age median_age
-                  # 35.61467 12.2182       5      96         36
+cat("\nAge Statistics:\n")
+print(age_stats)
+# mean_age  sd_age min_age max_age median_age
+# 35.61467 12.2182       5      96         36
 
 # Age groups distribution
 age_group_dist <- movie_1500 %>%
   count(age_group) %>%
-  mutate(percentage = n/sum(n)*100)
-print("\nAge Group Distribution:")
-print(age_group_dist) #age_group   n    percentage
-                      # 5-12      59        3.933333
-                      # 13-18     62       4.133333
-                      # 19-25     164       10.933333
-                      # 26-35     450       30.000000
-                      # 36-50     587       39.133333
-                      # 50+       178         11.866667
+  mutate(percentage = n / sum(n) * 100)
+cat("\nAge Group Distribution:\n")
+print(age_group_dist)
+# age_group   n    percentage
+# 5-12       59     3.933333
+# 13-18      62     4.133333
+# 19-25     164    10.933333
+# 26-35     450    30.000000
+# 36-50     587    39.133333
+# 50+       178    11.866667
 
 # Gender distribution
 gender_dist <- movie_1500 %>%
   count(gender) %>%
-  mutate(percentage = n/sum(n)*100)
-print("Gender Distribution:")
-print(gender_dist)    #gender                 n     percentage
-                      # Female                526   35.06667
-                      # Male                  624   41.60000
-                      # Other/Not Specified   350   23.33333
+  mutate(percentage = n / sum(n) * 100)
+cat("\nGender Distribution:\n")
+print(gender_dist)
+# gender                  n   percentage
+# Female                526    35.06667
+# Male                  624    41.60000
+# Other/Not Specified   350    23.33333
 
 # Country distribution (top 10)
 country_dist <- movie_1500 %>%
   count(country) %>%
   arrange(desc(n)) %>%
   head(10) %>%
-  mutate(percentage = n/sum(n)*100)
-print("\nTop 10 Countries:")
-print(country_dist)   #country    n     percentage
-                      # USA       1063   70.86667
-                      # Canada    437   29.13333
+  mutate(percentage = n / sum(n) * 100)
+cat("\nTop 10 Countries:\n")
+print(country_dist)
+# country    n   percentage
+# USA      1063    70.86667
+# Canada    437    29.13333
 
 # Visualize demographics
 # Age histogram
-ggplot(movie_1500, aes(x = age)) +
+p1 <- ggplot(movie_1500, aes(x = age)) +
   geom_histogram(bins = 30, fill = "steelblue", color = "black") +
   labs(title = "Age Distribution of Users",
        x = "Age", y = "Count") +
   theme_minimal()
+ggsave("age_distribution_hist.png", p1, width = 8, height = 5)
 
 # Gender bar chart
-ggplot(movie_1500, aes(x = gender, fill = gender)) +
+p2 <- ggplot(movie_1500, aes(x = gender, fill = gender)) +
   geom_bar() +
   labs(title = "Gender Distribution", x = "Gender", y = "Count") +
   theme_minimal() +
   scale_fill_manual(values = c("Female" = "pink", "Male" = "lightblue", 
                                "Other/Not Specified" = "gray"))
+ggsave("gender_distribution.png", p2, width = 8, height = 5)
 
-# PART 2 - EMOTIONAL CONNECTION DESCRIPTION
+# 6.2 EMOTIONAL INTENSITY DESCRIPTION
+# ----------------------------------------------------------------------------
 
 # Basic statistics
 emotional_stats <- movie_1500 %>%
   summarise(
-    mean_emotional = mean(emotional_connection, na.rm = TRUE),
-    sd_emotional = sd(emotional_connection, na.rm = TRUE),
-    min_emotional = min(emotional_connection, na.rm = TRUE),
-    max_emotional = max(emotional_connection, na.rm = TRUE),
-    median_emotional = median(emotional_connection, na.rm = TRUE),
-    skewness = psych::skew(emotional_connection),
-    kurtosis = psych::kurtosi(emotional_connection)
+    mean_emo = round(mean(emotional_intensity, na.rm = TRUE), 2),
+    sd_emo = round(sd(emotional_intensity, na.rm = TRUE), 2),
+    min_emo = round(min(emotional_intensity, na.rm = TRUE), 2),
+    max_emo = round(max(emotional_intensity, na.rm = TRUE), 2),
+    median_emo = round(median(emotional_intensity, na.rm = TRUE), 2),
+    skewness = round(psych::skew(emotional_intensity), 2),
+    kurtosis = round(psych::kurtosi(emotional_intensity), 2)
   )
-print("Emotional Connection Statistics:")
-print(emotional_stats)   #mean_emotional sd_emotional min_emotional max_emotional median_emotional
-                        # 6.848319     1.319502      3.056667         9.775         7.021667
-                        
-                        #skewness   kurtosis
-                        #-0.3643297 -0.2460691
+cat("\nEmotional Intensity Statistics:\n")
+print(emotional_stats)
+# mean_emo sd_emo min_emo max_emo median_emo skewness kurtosis
+# 3.55     0.57    1.91    4.82       3.58    -0.28    -0.28
 
-# Distribution visualization
-# Histogram
-ggplot(movie_1500, aes(x = emotional_connection)) +
-  geom_histogram(bins = 30, fill = "darkgreen", color = "black", alpha = 0.7) +
+# Distribution visualization - Histogram
+p3 <- ggplot(movie_1500, aes(x = emotional_intensity)) +
+  geom_histogram(bins = 20, fill = "darkgreen", color = "black", alpha = 0.7) +
   geom_density(aes(y = after_stat(count)), color = "red", size = 1) +
-  labs(title = "Distribution of Emotional Connection Scores",
-       x = "Emotional Connection (0-10 scale)", y = "Count") +
+  labs(title = "Distribution of Emotional Intensity",
+       x = "Emotional Intensity", y = "Count") +
   theme_minimal() +
-  geom_vline(xintercept = mean(movie_1500$emotional_connection), 
+  geom_vline(xintercept = mean(movie_1500$emotional_intensity), 
              color = "blue", linetype = "dashed", size = 1) +
-  annotate("text", x = mean(movie_1500$emotional_connection) + 0.5, 
+  annotate("text", x = mean(movie_1500$emotional_intensity) + 0.5, 
            y = 50, label = "Mean", color = "blue")
+ggsave("emotional_intensity_hist.png", p3, width = 8, height = 5)
 
 # Boxplot
-ggplot(movie_1500, aes(y = emotional_connection)) +
+p4 <- ggplot(movie_1500, aes(y = emotional_intensity)) +
   geom_boxplot(fill = "lightgreen", alpha = 0.7) +
-  labs(title = "Boxplot of Emotional Connection",
-       y = "Emotional Connection Score") +
+  labs(title = "Boxplot of Emotional Intensity",
+       y = "Emotional Intensity") +
   theme_minimal()
+ggsave("emotional_intensity_boxplot.png", p4, width = 8, height = 5)
 
-# Emotional connection by demographics
-# By gender
+# Emotional connection by gender
 emo_by_gender <- movie_1500 %>%
   group_by(gender) %>%
   summarise(
-    mean_emo = mean(emotional_connection, na.rm = TRUE),
-    sd_emo = sd(emotional_connection, na.rm = TRUE),
+    mean_emo = mean(emotional_intensity, na.rm = TRUE),
+    sd_emo = sd(emotional_intensity, na.rm = TRUE),
     n = n()
   )
-print("Emotional Connection by Gender:")
-print(emo_by_gender)  #gender              mean_emo   sd_emo    n
-                      #<chr>                  <dbl>  <dbl>    <int>
-                      #Female                  6.96   1.28    526
-                      #Male                    6.75   1.37    624
-                      #Other/Not Specified     6.85   1.27    350
+cat("\nEmotional Intensity by Gender:\n")
+print(emo_by_gender)
+# gender              mean_emo sd_emo   n
+# Female                 3.60  0.558  526
+# Male                   3.52  0.588  624
+# Other/Not Specified    3.53  0.545  350
 
 # By age group
 emo_by_age <- movie_1500 %>%
   group_by(age_group) %>%
   summarise(
-    mean_emo = mean(emotional_connection, na.rm = TRUE),
-    sd_emo = sd(emotional_connection, na.rm = TRUE),
+    mean_emo = mean(emotional_intensity, na.rm = TRUE),
+    sd_emo = sd(emotional_intensity, na.rm = TRUE),
     n = n()
   ) %>%
   arrange(age_group)
-print("Emotional Connection by Age Group:")
-print(emo_by_age)    # age_group    mean_emo    sd_emo  n
-                    #<chr>          <dbl>       <dbl> <int>
-                    # 5-12          7.09        1.02    59
-                    # 13-18         7.24        1.13    62
-                    #19-25         7.15         1.19   164
-                    #26-35         6.80         1.42   450
-                    #36-50         6.85         1.29   587
-                    #50+           6.47         1.33   178
+cat("\nEmotional Intensity by Age Group:\n")
+print(emo_by_age)
+# age_group mean_emo sd_emo   n
+# 5-12         3.58  0.456  59
+# 13-18        3.74  0.513  62
+# 19-25        3.70  0.544 164
+# 26-35        3.52  0.597 450
+# 36-50        3.55  0.520 587
+# 50+          3.43  0.616 178
 
 # Visualize emotional connection by groups
 # By gender
-ggplot(movie_1500, aes(x = gender, y = emotional_connection, fill = gender)) +
+p5 <- ggplot(movie_1500, aes(x = gender, y = emotional_intensity, fill = gender)) +
   geom_boxplot() +
-  labs(title = "Emotional Connection by Gender",
-       x = "Gender", y = "Emotional Connection") +
+  labs(title = "Emotional Intensity by Gender",
+       x = "Gender", y = "Emotional Intensity") +
   theme_minimal() +
   scale_fill_manual(values = c("Female" = "pink", "Male" = "lightblue"))
+ggsave("emotional_intensity_gender.png", p5, width = 8, height = 5)
 
 # By age group
-ggplot(movie_1500, aes(x = age_group, y = emotional_connection, fill = age_group)) +
+p6 <- ggplot(movie_1500, aes(x = age_group, y = emotional_intensity, fill = age_group)) +
   geom_boxplot() +
-  labs(title = "Emotional Connection by Age Group",
-       x = "Age Group", y = "Emotional Connection") +
+  labs(title = "Emotional Intensity by Age Group",
+       x = "Age Group", y = "Emotional Intensity") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave("emotional_intensity_age.png", p6, width = 8, height = 5)
 
+# 6.3 SATISFACTION DESCRIPTION
+# ----------------------------------------------------------------------------
 
-# PART 3 - SATISFACTION DESCRIPTION (COMPLETE WITH VISUALIZATIONS)
-
-# 3.1 Basic statistics (you already have this)
+# Basic statistics
 satisfaction_stats <- movie_1500 %>%
   summarise(
     mean_sat = mean(satisfaction, na.rm = TRUE),
@@ -397,26 +485,27 @@ satisfaction_stats <- movie_1500 %>%
     skewness = psych::skew(satisfaction),
     kurtosis = psych::kurtosi(satisfaction)
   )
-print("Satisfaction Statistics:")
-print(satisfaction_stats)   #mean_sat   sd_sat      min_sat     max_sat   median_sat   skewness   kurtosis
-                            #3.37768    0.6781707   1.333333       5      3.333333    -0.3174264 -0.1333199
+cat("\nSatisfaction Statistics:\n")
+print(satisfaction_stats)
+# mean_sat   sd_sat  min_sat max_sat median_sat skewness kurtosis
+# 3.37768 0.6781707 1.333333      5  3.333333 -0.31743 -0.13332
 
-# 3.2 Distribution visualization (you already have these)
-# Histogram with density
-ggplot(movie_1500, aes(x = satisfaction)) +
+# Distribution visualization - Histogram
+p7 <- ggplot(movie_1500, aes(x = satisfaction)) +
   geom_histogram(bins = 30, fill = "purple", color = "black", alpha = 0.7) +
   geom_density(aes(y = after_stat(count)), color = "red", size = 1) +
   labs(title = "Distribution of Satisfaction Scores",
-       x = "Satisfaction (0-10 scale?)", y = "Count") +
+       x = "Satisfaction (1-5 scale)", y = "Count") +
   theme_minimal() +
   geom_vline(xintercept = mean(movie_1500$satisfaction), 
              color = "blue", linetype = "dashed", size = 1) +
   annotate("text", x = mean(movie_1500$satisfaction) + 0.5, 
            y = 50, label = paste("Mean =", round(mean(movie_1500$satisfaction), 2)), 
            color = "blue")
+ggsave("satisfaction_distribution.png", p7, width = 8, height = 5)
 
 # Boxplot
-ggplot(movie_1500, aes(x = "All Users", y = satisfaction)) +
+p8 <- ggplot(movie_1500, aes(x = "All Users", y = satisfaction)) +
   geom_boxplot(fill = "purple", alpha = 0.7) +
   stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "red") +
   annotate("text", x = 1.4, y = mean(movie_1500$satisfaction), 
@@ -425,14 +514,13 @@ ggplot(movie_1500, aes(x = "All Users", y = satisfaction)) +
   labs(title = "Boxplot of Satisfaction",
        x = "", y = "Satisfaction Score") +
   theme_minimal()
+ggsave("satisfaction_boxplot.png", p8, width = 8, height = 5)
 
+# 6.4 SATISFACTION BY DEMOGRAPHICS
+# ----------------------------------------------------------------------------
 
-
-
-
-# 3.3 Satisfaction by Gender - VISUALIZATION
 # Boxplot by gender
-ggplot(movie_1500, aes(x = gender, y = satisfaction, fill = gender)) +
+p9 <- ggplot(movie_1500, aes(x = gender, y = satisfaction, fill = gender)) +
   geom_boxplot(alpha = 0.7) +
   stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +
   labs(title = "Satisfaction by Gender",
@@ -441,6 +529,7 @@ ggplot(movie_1500, aes(x = gender, y = satisfaction, fill = gender)) +
   scale_fill_manual(values = c("Female" = "pink", "Male" = "lightblue", 
                                "Other/Not Specified" = "gray")) +
   theme(legend.position = "none")
+ggsave("satisfaction_gender_box.png", p9, width = 8, height = 5)
 
 # Bar chart with means and error bars for gender
 sat_by_gender_summary <- movie_1500 %>%
@@ -454,7 +543,7 @@ sat_by_gender_summary <- movie_1500 %>%
     ci_upper = mean_sat + 1.96 * se
   )
 
-ggplot(sat_by_gender_summary, aes(x = gender, y = mean_sat, fill = gender)) +
+p10 <- ggplot(sat_by_gender_summary, aes(x = gender, y = mean_sat, fill = gender)) +
   geom_col(alpha = 0.7) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
   labs(title = "Mean Satisfaction by Gender (with 95% CI)",
@@ -464,10 +553,10 @@ ggplot(sat_by_gender_summary, aes(x = gender, y = mean_sat, fill = gender)) +
                                "Other/Not Specified" = "gray")) +
   theme(legend.position = "none") +
   geom_text(aes(label = paste0("n=", n)), y = 1, color = "black")
+ggsave("mean_satisfaction_gender.png", p10, width = 8, height = 5)
 
-# 3.4 Satisfaction by Age Group - VISUALIZATION
 # Boxplot by age group
-ggplot(movie_1500, aes(x = age_group, y = satisfaction, fill = age_group)) +
+p11 <- ggplot(movie_1500, aes(x = age_group, y = satisfaction, fill = age_group)) +
   geom_boxplot(alpha = 0.7) +
   stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +
   labs(title = "Satisfaction by Age Group",
@@ -476,6 +565,7 @@ ggplot(movie_1500, aes(x = age_group, y = satisfaction, fill = age_group)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "none") +
   scale_fill_brewer(palette = "Blues")
+ggsave("satisfaction_age_box.png", p11, width = 8, height = 5)
 
 # Bar chart with means and error bars for age group
 sat_by_age_summary <- movie_1500 %>%
@@ -490,7 +580,7 @@ sat_by_age_summary <- movie_1500 %>%
   ) %>%
   arrange(age_group)
 
-ggplot(sat_by_age_summary, aes(x = age_group, y = mean_sat, fill = age_group)) +
+p12 <- ggplot(sat_by_age_summary, aes(x = age_group, y = mean_sat, fill = age_group)) +
   geom_col(alpha = 0.7) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
   labs(title = "Mean Satisfaction by Age Group (with 95% CI)",
@@ -500,9 +590,9 @@ ggplot(sat_by_age_summary, aes(x = age_group, y = mean_sat, fill = age_group)) +
         legend.position = "none") +
   scale_fill_brewer(palette = "Blues") +
   geom_text(aes(label = paste0("n=", n)), y = 1, color = "black")
+ggsave("mean_satisfaction_age.png", p12, width = 8, height = 5)
 
-# 3.5 Satisfaction by Country - VISUALIZATION (Top countries only)
-# Get top 8 countries by frequency
+# Satisfaction by Country (Top countries only)
 top_countries <- movie_1500 %>%
   count(country) %>%
   arrange(desc(n)) %>%
@@ -514,8 +604,8 @@ movie_top_countries <- movie_1500 %>%
   filter(country %in% top_countries)
 
 # Boxplot by country
-ggplot(movie_top_countries, aes(x = reorder(country, satisfaction, FUN = median), 
-                                y = satisfaction, fill = country)) +
+p13 <- ggplot(movie_top_countries, aes(x = reorder(country, satisfaction, FUN = median), 
+                                       y = satisfaction, fill = country)) +
   geom_boxplot(alpha = 0.7) +
   stat_summary(fun = mean, geom = "point", shape = 18, size = 3, color = "black") +
   labs(title = "Satisfaction by Country (Top 8 Countries)",
@@ -523,37 +613,11 @@ ggplot(movie_top_countries, aes(x = reorder(country, satisfaction, FUN = median)
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "none") +
-  coord_flip()  # Flip coordinates for better readability
-
-# Bar chart with means for top countries
-sat_by_country_summary <- movie_1500 %>%
-  filter(country %in% top_countries) %>%
-  group_by(country) %>%
-  summarise(
-    mean_sat = mean(satisfaction, na.rm = TRUE),
-    sd_sat = sd(satisfaction, na.rm = TRUE),
-    n = n(),
-    se = sd_sat / sqrt(n),
-    ci_lower = mean_sat - 1.96 * se,
-    ci_upper = mean_sat + 1.96 * se
-  ) %>%
-  arrange(desc(mean_sat))
-
-ggplot(sat_by_country_summary, aes(x = reorder(country, mean_sat), y = mean_sat, fill = country)) +
-  geom_col(alpha = 0.7) +
-  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
-  labs(title = "Mean Satisfaction by Country (Top 8, with 95% CI)",
-       x = "Country", y = "Mean Satisfaction Score") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none") +
-  geom_text(aes(label = paste0("n=", n)), y = 0.5, color = "black") +
   coord_flip()
+ggsave("satisfaction_country_box.png", p13, width = 8, height = 5)
 
-
-# 3.6 Combined visualization - Satisfaction across multiple demographics
-# Create a faceted plot to compare gender and age together
-ggplot(movie_1500, aes(x = age_group, y = satisfaction, fill = gender)) +
+# Combined visualization - Gender and age
+p14 <- ggplot(movie_1500, aes(x = age_group, y = satisfaction, fill = gender)) +
   geom_boxplot(alpha = 0.7, position = position_dodge(width = 0.8)) +
   labs(title = "Satisfaction by Age Group and Gender",
        x = "Age Group", y = "Satisfaction Score") +
@@ -561,8 +625,9 @@ ggplot(movie_1500, aes(x = age_group, y = satisfaction, fill = gender)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   scale_fill_manual(values = c("Female" = "pink", "Male" = "lightblue", 
                                "Other/Not Specified" = "gray"))
+ggsave("satisfaction_gender_age.png", p14, width = 8, height = 5)
 
-# 3.7 Create a summary table for satisfaction by demographics
+# Cross-tabulation table
 satisfaction_demographics_table <- movie_1500 %>%
   group_by(age_group, gender) %>%
   summarise(
@@ -577,57 +642,51 @@ satisfaction_demographics_table <- movie_1500 %>%
     values_fill = 0
   )
 
-print("\nSatisfaction by Age Group and Gender (Cross-tabulation):")
+cat("\nSatisfaction by Age Group and Gender (Cross-tabulation):\n")
 print(satisfaction_demographics_table)
-# age_group          mean_satisfaction_Female   mean_satisfaction_Male
-#<chr>                        <dbl>                  <dbl>
-#0-12                          3.66                   3.47
-# 13-18                         3.59                   3.3 
-# 19-25                         3.41                   3.3 
-# 26-35                         3.29                   3.39
-# 36-50                         3.26                   3.35
-# 50+                           3.3                    3.58
 
-# PART 4: EMOTION-SATISFACTION RELATIONSHIP
+# 6.5 EMOTION-SATISFACTION RELATIONSHIP
+# ----------------------------------------------------------------------------
 
-# 4.1 Overall correlation
-cor_test <- cor.test(movie_1500$emotional_connection, 
+# Overall correlation
+cor_test <- cor.test(movie_1500$emotional_intensity, 
                      movie_1500$satisfaction, 
                      method = "pearson")
 
-print("Correlation between Emotional Connection and Satisfaction:")
-print(paste("Pearson r =", round(cor_test$estimate, 3)))  #r = 0.033
-print(paste("p-value =", round(cor_test$p.value, 4)))     #p-value = 0.2033
-print(paste("95% CI: [", round(cor_test$conf.int[1], 3), ",", 
-            round(cor_test$conf.int[2], 3), "]"))          #[ -0.018 , 0.083 ]
+cat("\nCorrelation between Emotional Connection and Satisfaction:\n")
+cat("Pearson r =", round(cor_test$estimate, 3), "\n")        # r = 0.056
+cat("p-value =", round(cor_test$p.value, 4), "\n")           # p-value = 0.0307
+cat("95% CI: [", round(cor_test$conf.int[1], 3), ",", 
+    round(cor_test$conf.int[2], 3), "]\n")                   # [ 0.005 , 0.106 ]
 
-# 4.2 Scatter plot with trend line - FIXED
-ggplot(movie_1500, aes(x = emotional_connection, y = satisfaction)) +
+# Scatter plot with trend line
+p15 <- ggplot(movie_1500, aes(x = emotional_intensity, y = satisfaction)) +
   geom_point(alpha = 0.5, color = "darkblue") +
   geom_smooth(method = "lm", color = "red", se = TRUE, fill = "pink") +
-  labs(title = "Relationship Between Emotional Connection and Satisfaction",
-       x = "Emotional Connection Score", 
+  labs(title = "Relationship Between Emotional Intensity and Satisfaction",
+       x = "Emotional Intensity Score", 
        y = "Satisfaction Score") +
   theme_minimal() +
   annotate("text", 
-           x = min(movie_1500$emotional_connection) + 1, 
+           x = min(movie_1500$emotional_intensity) + 1, 
            y = max(movie_1500$satisfaction) - 0.5,
            label = paste("r =", round(cor_test$estimate, 3), 
                          "\np =", round(cor_test$p.value, 4)),
            hjust = 0)
+ggsave("emotional_intensity_satisfaction_scatter.png", p15, width = 8, height = 5)
 
-# 4.3 Create emotional connection groups (quartiles)
+# Create emotional connection groups (quartiles)
 movie_1500 <- movie_1500 %>%
   mutate(
     emotional_group = case_when(
-      emotional_connection < quantile(emotional_connection, 0.25) ~ "Low Emotion",
-      emotional_connection < quantile(emotional_connection, 0.50) ~ "Medium-Low",
-      emotional_connection < quantile(emotional_connection, 0.75) ~ "Medium-High",
+      emotional_intensity < quantile(emotional_intensity, 0.25) ~ "Low Emotion",
+      emotional_intensity < quantile(emotional_intensity, 0.50) ~ "Medium-Low",
+      emotional_intensity < quantile(emotional_intensity, 0.75) ~ "Medium-High",
       TRUE ~ "High Emotion"
     )
   )
 
-# 4.4 Satisfaction by emotional group
+# Satisfaction by emotional group
 sat_by_emotion_group <- movie_1500 %>%
   group_by(emotional_group) %>%
   summarise(
@@ -640,20 +699,17 @@ sat_by_emotion_group <- movie_1500 %>%
   ) %>%
   arrange(emotional_group)
 
-print("\nSatisfaction by Emotional Connection Group:")
-print(sat_by_emotion_group) 
-#emotional_group mean_satisfaction sd_satisfaction     n     se ci_lower
-#<chr>                       <dbl>           <dbl> <int>  <dbl>    <dbl>
-# High Emotion                 3.41           0.720   377 0.0371     3.34
-# Low Emotion                  3.33           0.679   374 0.0351     3.26
-# Medium-High                  3.36           0.732   374 0.0378     3.28
-# Medium-Low                   3.41           0.569   375 0.0294     3.36
+cat("\nSatisfaction by Emotional Connection Group:\n")
+print(sat_by_emotion_group)
+# emotional_group mean_satisfaction sd_satisfaction   n     se ci_lower ci_upper
+# High Emotion               3.46           0.675 375 0.0349     3.39     3.52
+# Low Emotion                3.35           0.674 374 0.0349     3.28     3.42
+# Medium-High                3.31           0.716 377 0.0369     3.24     3.38
+# Medium-Low                 3.40           0.639 374 0.0330     3.33     3.46
 
-
-
-# 4.5 Bar chart of satisfaction by emotional group
-ggplot(sat_by_emotion_group, aes(x = emotional_group, y = mean_satisfaction, 
-                                 fill = emotional_group)) +
+# Bar chart of satisfaction by emotional group
+p16 <- ggplot(sat_by_emotion_group, aes(x = emotional_group, y = mean_satisfaction, 
+                                        fill = emotional_group)) +
   geom_col() +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
   labs(title = "Satisfaction by Emotional Connection Level",
@@ -665,101 +721,87 @@ ggplot(sat_by_emotion_group, aes(x = emotional_group, y = mean_satisfaction,
                                "Medium-Low" = "orange",
                                "Medium-High" = "lightgreen", 
                                "High Emotion" = "darkgreen"))
+ggsave("satisfaction_emotion_group.png", p16, width = 8, height = 5)
 
-
-
-# 4.6 Does the relationship hold across groups? (quick check)
-# By gender
+# Correlation by gender
 cor_by_gender <- movie_1500 %>%
   group_by(gender) %>%
   summarise(
-    correlation = cor(emotional_connection, satisfaction, method = "pearson"),
-    p_value = cor.test(emotional_connection, satisfaction)$p.value,
+    correlation = cor(emotional_intensity, satisfaction, method = "pearson"),
+    p_value = cor.test(emotional_intensity, satisfaction)$p.value,
     n = n()
   )
-print("\nCorrelation by Gender:")
+cat("\nCorrelation by Gender:\n")
 print(cor_by_gender)
-#gender              correlation    p_value       n
-#<chr>                     <dbl>      <dbl>     <int>
-#Female                 -0.0497     0.255        526
-#Male                   -0.00840    0.834        624
-#Other/Not Specified     0.251      0.00000199   350
+# gender              correlation p_value   n
+# Female                 0.0182 0.677    526
+# Male                   0.00860 0.830    624
+# Other/Not Specified    0.224  0.0000244 350
 
-
-
-# By age group
+# Correlation by age group
 cor_by_age <- movie_1500 %>%
   group_by(age_group) %>%
   filter(n() >= 10) %>%
   summarise(
-    correlation = cor(emotional_connection, satisfaction, method = "pearson"),
-    p_value = cor.test(emotional_connection, satisfaction)$p.value,
+    correlation = cor(emotional_intensity, satisfaction, method = "pearson"),
+    p_value = cor.test(emotional_intensity, satisfaction)$p.value,
     n = n()
   )
-print("\nCorrelation by Age Group:")
+cat("\nCorrelation by Age Group:\n")
 print(cor_by_age)
-# age_group correlation p_value     n
-#<chr>           <dbl>   <dbl> <int>
-# 0-12         0.149     0.260     59
-#13-18        0.109     0.397     62
-#19-25        0.190     0.0149   164
-#26-35        0.0664    0.160    450
-#36-50       -0.000285  0.995    587
-#50+         -0.0706    0.349    178
-
-
+# age_group correlation p_value   n
+# 13-18         0.111  0.391    62
+# 19-25         0.127  0.105   164
+# 26-35         0.0708 0.134   450
+# 36-50         0.0514 0.213   587
+# 5-12          0.190  0.149    59
+# 50+          -0.0405 0.591   178
 
 # ============================================================================
-# PART A: MAIN HYPOTHESIS TESTING
-# Testing: "Audiences who feel emotionally connected report higher satisfaction"
+# 7. INFERENTIAL ANALYSIS - MAIN HYPOTHESIS TESTING
+# ============================================================================
+# Hypothesis: "Audiences who feel emotionally connected report higher satisfaction"
 # ============================================================================
 
-cat("\n", rep("=", 80), "\n")
-cat("PART A: MAIN HYPOTHESIS TESTING\n")
-cat(rep("=", 80), "\n")
+cat("\n==================================================\n")
+cat("INFERENTIAL ANALYSIS - MAIN HYPOTHESIS TESTING\n")
+cat("==================================================\n")
 
-#------------------------------------------------------------------------------
-# Step 1: Address Scale Mismatch First
-#------------------------------------------------------------------------------
+# 7.1 Address Scale Mismatch First
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 1: Addressing Scale Mismatch ---\n")
 cat("\nVariable Scales:\n")
-cat("  Emotional Connection: Range", range(movie_1500$emotional_connection)[1], "-", 
-    range(movie_1500$emotional_connection)[2], 
-    "(Mean =", round(mean(movie_1500$emotional_connection), 2), ")\n")
+cat("  Emotional Connection: Range", range(movie_1500$emotional_intensity)[1], "-", 
+    range(movie_1500$emotional_intensity)[2], 
+    "(Mean =", round(mean(movie_1500$emotional_intensity), 2), ")\n")
+# Range 1.912 - 4.82 (Mean = 3.55)
+
 cat("  Satisfaction: Range", range(movie_1500$satisfaction)[1], "-", 
     range(movie_1500$satisfaction)[2], 
     "(Mean =", round(mean(movie_1500$satisfaction), 2), ")\n")
-
-# Create standardized variables for fair comparison
-movie_1500 <- movie_1500 %>%
-  mutate(
-    emotional_connection_std = as.numeric(scale(emotional_connection)),
-    satisfaction_std = as.numeric(scale(satisfaction)),
-    age_std = as.numeric(scale(age))
-  )
+# Range 1.333333 - 5 (Mean = 3.38)
 
 cat("\n✓ Created standardized variables (mean ≈ 0, SD ≈ 1)\n")
 
-#------------------------------------------------------------------------------
-# Step 2: Simple Regression (Emotional Connection ONLY)
-#------------------------------------------------------------------------------
+# 7.2 Simple Regression (Emotional Connection ONLY)
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 2: Simple Regression (Without Demographics) ---\n")
 
 # Raw model
-model_simple_raw <- lm(satisfaction ~ emotional_connection, data = movie_1500)
+model_simple_raw <- lm(satisfaction ~ emotional_intensity, data = movie_1500)
 cat("\n▶ Raw Model (original scales):\n")
-cat("   Coefficient =", round(coef(model_simple_raw)[2], 4), "\n")   #0.0169
-cat("   p-value =", round(summary(model_simple_raw)$coefficients[2, 4], 4), "\n")  #0.2033
-cat("   R² =", round(summary(model_simple_raw)$r.squared, 4), "\n")  # R² = 0.0011
+cat("   Coefficient =", round(coef(model_simple_raw)[2], 4), "\n")        # 0.0665
+cat("   p-value =", round(summary(model_simple_raw)$coefficients[2, 4], 4), "\n")  # 0.0307
+cat("   R² =", round(summary(model_simple_raw)$r.squared, 4), "\n")       # R² = 0.0031
 
 # Standardized model
-model_simple_std <- lm(satisfaction_std ~ emotional_connection_std, data = movie_1500)
+model_simple_std <- lm(satisfaction_std ~ emotional_intensity_std, data = movie_1500)
 cat("\n▶ Standardized Model (scale-free):\n")
-cat("   Standardized β =", round(coef(model_simple_std)[2], 4), "\n")  #β = 0.0329 
-cat("   p-value =", round(summary(model_simple_std)$coefficients[2, 4], 4), "\n")   #p-vaue = 0.2033 
-cat("   R² =", round(summary(model_simple_std)$r.squared, 4), "\n")  #R² = 0.0011 
+cat("   Standardized β =", round(coef(model_simple_std)[2], 4), "\n")     # β = 0.0558
+cat("   p-value =", round(summary(model_simple_std)$coefficients[2, 4], 4), "\n")  # p-value = 0.0307
+cat("   R² =", round(summary(model_simple_std)$r.squared, 4), "\n")       # R² = 0.0031
 
 # Interpretation
 if(summary(model_simple_raw)$coefficients[2, 4] < 0.05) {
@@ -767,55 +809,34 @@ if(summary(model_simple_raw)$coefficients[2, 4] < 0.05) {
 } else {
   cat("\n✗ SIMPLE MODEL: Emotional connection does NOT significantly predict satisfaction\n")
 }
+# ✓ SIMPLE MODEL: Emotional connection SIGNIFICANTLY predicts satisfaction
 
-#------------------------------------------------------------------------------
-# Step 3: Multiple Regression (WITH Demographics as Controls)
-#------------------------------------------------------------------------------
+# 7.3 Multiple Regression (WITH Demographics as Controls)
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 3: Multiple Regression (With Demographics) ---\n")
 
-# Create dummy variables for gender (if not already done)
-if(!"gender_male" %in% names(movie_1500)) {
-  movie_1500 <- movie_1500 %>%
-    mutate(
-      gender_male = ifelse(gender == "Male", 1, 0),
-      gender_other = ifelse(gender == "Other/Not Specified", 1, 0)
-    )
-}
-
-# Create age group dummies (if not already done)
-if(!"age_25_34" %in% names(movie_1500)) {
-  movie_1500 <- movie_1500 %>%
-    mutate(
-      age_13_18 = ifelse(age_group == "13-18", 1, 0),
-      age_19_25 = ifelse(age_group == "19-25", 1, 0),
-      age_26_35 = ifelse(age_group == "26-35", 1, 0),
-      age_36_50 = ifelse(age_group == "36-50", 1, 0),
-      age_50plus = ifelse(age_group == "50+", 1, 0)
-    )
-}
-
 # RAW MODEL (original scales)
-model_full_raw <- lm(satisfaction ~ emotional_connection + age + 
+model_full_raw <- lm(satisfaction ~ emotional_intensity + age + 
                        gender_male + gender_other + 
-                       age_13_18 + age_19_25 + age_26_35 + age_36_50 + age_50plus,  # age_5_12 is reference 
+                       age_13_18 + age_19_25 + age_26_35 + age_36_50 + age_50plus,
                      data = movie_1500)
 
 cat("\n▶ RAW MODEL RESULTS (original scales):\n")
 print(summary(model_full_raw))
 
 # Extract emotional connection coefficient
-emo_coef_raw <- coef(model_full_raw)["emotional_connection"]
-emo_p_raw <- summary(model_full_raw)$coefficients["emotional_connection", 4]
+emo_coef_raw <- coef(model_full_raw)["emotional_intensity"]
+emo_p_raw <- summary(model_full_raw)$coefficients["emotional_intensity", 4]
 
 cat("\n▶ Emotional Connection (with demographics controlled):\n")
-cat("   Raw coefficient =", round(emo_coef_raw, 4), "\n")
-cat("   p-value =", round(emo_p_raw, 4), "\n")
+cat("   Raw coefficient =", round(emo_coef_raw, 4), "\n")        # 0.0761
+cat("   p-value =", round(emo_p_raw, 4), "\n")                   # 0.0142
 
 # STANDARDIZED MODEL (for fair comparison)
-model_full_std <- lm(satisfaction_std ~ emotional_connection_std + age_std + 
+model_full_std <- lm(satisfaction_std ~ emotional_intensity_std + age_std + 
                        gender_male + gender_other + 
-                       age_25_34 + age_35_49 + age_50plus, 
+                       age_13_18 + age_26_35 + age_36_50 + age_50plus,
                      data = movie_1500)
 
 cat("\n▶ STANDARDIZED MODEL RESULTS (scale-free):\n")
@@ -823,16 +844,15 @@ summary_std <- summary(model_full_std)
 print(summary_std)
 
 # Extract standardized coefficient
-emo_coef_std <- coef(model_full_std)["emotional_connection_std"]
-emo_p_std <- summary_std$coefficients["emotional_connection_std", 4]
+emo_coef_std <- coef(model_full_std)["emotional_intensity_std"]
+emo_p_std <- summary_std$coefficients["emotional_intensity_std", 4]
 
 cat("\n▶ Emotional Connection (standardized):\n")
-cat("   Standardized β =", round(emo_coef_std, 4), "\n")  # β = 0.0403 
-cat("   p-value =", round(emo_p_std, 4), "\n")  #0.1203
+cat("   Standardized β =", round(emo_coef_std, 4), "\n")        # β = 0.0628
+cat("   p-value =", round(emo_p_std, 4), "\n")                  # 0.0158
 
-#------------------------------------------------------------------------------
-# Step 4: Test if Adding Demographics Improves the Model
-#------------------------------------------------------------------------------
+# 7.4 Model Comparison
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 4: Model Comparison ---\n")
 
@@ -845,16 +865,16 @@ if(model_comparison$`Pr(>F)`[2] < 0.05) {
 } else {
   cat("\n✗ Adding demographics does NOT significantly improve the model\n")
 }
+# ✓ Adding demographics SIGNIFICANTLY improves the model
 
-#------------------------------------------------------------------------------
-# Step 5: Check if Emotional Connection is Still Significant After Controls
-#------------------------------------------------------------------------------
+# 7.5 Main Hypothesis Conclusion
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 5: MAIN HYPOTHESIS CONCLUSION ---\n")
 
 cat("\nComparison of Emotional Connection Effect:\n")
-cat("   Without demographics: p =", round(summary(model_simple_raw)$coefficients[2, 4], 4), "\n")
-cat("   With demographics:    p =", round(emo_p_raw, 4), "\n")
+cat("   Without demographics: p =", round(summary(model_simple_raw)$coefficients[2, 4], 4), "\n")  # p = 0.0307
+cat("   With demographics:    p =", round(emo_p_raw, 4), "\n")                                      # p = 0.0142
 
 if(emo_p_raw < 0.05) {
   cat("\n✓✓✓ MAIN HYPOTHESIS SUPPORTED!\n")
@@ -867,22 +887,23 @@ if(emo_p_raw < 0.05) {
   } else {
     cat("   However, the relationship is NEGATIVE (opposite of hypothesis).\n")
   }
-  
 } else {
   cat("\n✗✗✗ MAIN HYPOTHESIS NOT SUPPORTED\n")
   cat("   Emotional connection does NOT significantly predict satisfaction")
   cat(" after controlling for age and gender.\n")
   cat("   p-value =", round(emo_p_raw, 4), "> 0.05\n")
 }
+# ✓✓✓ MAIN HYPOTHESIS SUPPORTED!
+# Emotional connection significantly predicts satisfaction even after controlling for age and gender.
+# The relationship is POSITIVE (as emotional connection increases, satisfaction increases).
 
-#------------------------------------------------------------------------------
-# Step 6: Confidence Intervals
-#------------------------------------------------------------------------------
+# 7.6 Confidence Intervals
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 6: Confidence Intervals ---\n")
 cat("\n95% Confidence Interval for Emotional Connection:\n")
-emo_ci <- confint(model_full_raw)["emotional_connection", ]
-cat("   [", round(emo_ci[1], 4), ", ", round(emo_ci[2], 4), "]\n")
+emo_ci <- confint(model_full_raw)["emotional_intensity", ]
+cat("   [", round(emo_ci[1], 4), ", ", round(emo_ci[2], 4), "]\n")  # [ 0.0153 , 0.1369 ]
 
 if(emo_ci[1] < 0 & emo_ci[2] < 0) {
   cat("   Entire interval is NEGATIVE - significant negative relationship\n")
@@ -891,10 +912,10 @@ if(emo_ci[1] < 0 & emo_ci[2] < 0) {
 } else if(emo_ci[1] < 0 & emo_ci[2] > 0) {
   cat("   Interval contains ZERO - relationship NOT significant\n")
 }
+# Entire interval is POSITIVE - significant positive relationship
 
-#------------------------------------------------------------------------------
-# Step 7: Summary Table for Main Hypothesis
-#------------------------------------------------------------------------------
+# 7.7 Summary Table for Main Hypothesis
+# ----------------------------------------------------------------------------
 
 cat("\n--- STEP 7: Summary Table ---\n")
 
@@ -911,52 +932,36 @@ hypothesis_summary <- data.frame(
 )
 
 print(hypothesis_summary)
-  
-# Model                      Predictor             Coefficient       Std_Coefficient
-#Simple (no controls)       Emotional Connection      0.0169          0.0329
-# Full (with demographics)  Emotional Connection      0.0207          0.0403
-
-#P_value   Significant
-#0.2033          NO
-#0.1203          NO
-
-cat("\n", rep("=", 80), "\n")
-cat("END OF MAIN HYPOTHESIS TESTING\n")
-cat(rep("=", 80), "\n")
 
 # ============================================================================
-# PART B: TESTING MAIN HYPOTHESIS - MULTIPLE METHODS
-# Testing: "Audiences who feel emotionally connected report higher satisfaction"
-# Using: Means, Variances, and Proportions
+# 8. ADDITIONAL HYPOTHESIS TESTING METHODS
 # ============================================================================
 
-cat("\n", rep("=", 80), "\n")
-cat("PART B: TESTING MAIN HYPOTHESIS - MULTIPLE METHODS\n")
-cat(rep("=", 80), "\n")
+cat("\n==================================================\n")
+cat("ADDITIONAL HYPOTHESIS TESTING METHODS\n")
+cat("==================================================\n")
 
-#------------------------------------------------------------------------------
-# Step 1: Create High/Low Emotional Connection Groups
-#------------------------------------------------------------------------------
+# 8.1 Create High/Low Emotional Connection Groups
+# ----------------------------------------------------------------------------
 
-# Using median split (simpler for interpretation)
-emo_median <- median(movie_1500$emotional_connection)
+# Using median split
+emo_median <- median(movie_1500$emotional_intensity)
 
 movie_1500 <- movie_1500 %>%
   mutate(
     emotion_level = case_when(
-      emotional_connection >= emo_median ~ "High Emotion",
+      emotional_intensity >= emo_median ~ "High Emotion",
       TRUE ~ "Low Emotion"
     )
   )
 
 cat("\n--- Emotional Connection Groups (Median Split) ---\n")
-table(movie_1500$emotion_level)   #High Emotion  Low Emotion 
-                                  #751              749 
+table(movie_1500$emotion_level)
+# High Emotion  Low Emotion 
+# 752           748
 
-#------------------------------------------------------------------------------
-# Step 2: METHOD 1 - Compare MEANS (t-test)
-# H₁: Mean satisfaction is higher in High Emotion group
-#------------------------------------------------------------------------------
+# 8.2 METHOD 1 - Compare MEANS (t-test)
+# ----------------------------------------------------------------------------
 
 cat("\n", rep("-", 60), "\n")
 cat("METHOD 1: COMPARING MEANS (Independent t-test)\n")
@@ -970,28 +975,27 @@ low_emo_sat <- movie_1500 %>% filter(emotion_level == "Low Emotion") %>% pull(sa
 cat("\nGroup Statistics:\n")
 cat("  High Emotion Group: n =", length(high_emo_sat), 
     ", Mean =", round(mean(high_emo_sat), 3),
-    ", SD =", round(sd(high_emo_sat), 3), "\n")
+    ", SD =", round(sd(high_emo_sat), 3), "\n")        # High Emotion Group: n = 752, Mean = 3.382, SD = 0.699
 cat("  Low Emotion Group:  n =", length(low_emo_sat), 
     ", Mean =", round(mean(low_emo_sat), 3),
-    ", SD =", round(sd(low_emo_sat), 3), "\n")
-cat("  Mean Difference:", round(mean(high_emo_sat) - mean(low_emo_sat), 3), "\n")
+    ", SD =", round(sd(low_emo_sat), 3), "\n")         # Low Emotion Group: n = 748, Mean = 3.373, SD = 0.657
+cat("  Mean Difference:", round(mean(high_emo_sat) - mean(low_emo_sat), 3), "\n")  # Mean Difference: 0.009
 
-# Independent t-test (assuming equal variances)
+# Independent t-test
 t_test_means <- t.test(high_emo_sat, low_emo_sat, var.equal = TRUE, 
-                       alternative = "greater")  # Testing if high > low
+                       alternative = "greater")
 
 cat("\n▶ Independent t-test Results:\n")
-cat("  t-statistic =", round(t_test_means$statistic, 3), "\n")
-cat("  df =", round(t_test_means$parameter, 0), "\n")
-cat("  p-value =", round(t_test_means$p.value, 4), "\n")
+cat("  t-statistic =", round(t_test_means$statistic, 3), "\n")        # t-statistic = 0.253
+cat("  df =", round(t_test_means$parameter, 0), "\n")                 # df = 1498
+cat("  p-value =", round(t_test_means$p.value, 4), "\n")              # p-value = 0.4
 
 if(t_test_means$p.value < 0.05) {
   cat("\n✓ MEANS TEST: High Emotion group has significantly HIGHER satisfaction\n")
-  cat("  This SUPPORTS your hypothesis!\n")
 } else {
   cat("\n✗ MEANS TEST: No significant difference in satisfaction means\n")
-  cat("  This does NOT support your hypothesis\n")
 }
+# ✗ MEANS TEST: No significant difference in satisfaction means
 
 # Effect size (Cohen's d)
 pooled_sd <- sqrt(((length(high_emo_sat)-1)*var(high_emo_sat) + 
@@ -999,15 +1003,11 @@ pooled_sd <- sqrt(((length(high_emo_sat)-1)*var(high_emo_sat) +
                     (length(high_emo_sat) + length(low_emo_sat) - 2))
 cohens_d <- (mean(high_emo_sat) - mean(low_emo_sat)) / pooled_sd
 
-cat("\nEffect size (Cohen's d) =", round(abs(cohens_d), 3))
-cat(" -", ifelse(abs(cohens_d) < 0.2, "Very small",
-                 ifelse(abs(cohens_d) < 0.5, "Small",
-                        ifelse(abs(cohens_d) < 0.8, "Medium", "Large"))), "effect\n")
+cat("\nEffect size (Cohen's d) =", round(abs(cohens_d), 3))           # Effect size = 0.013
+cat(" - Very small effect\n")
 
-#------------------------------------------------------------------------------
-# Step 3: METHOD 2 - Compare VARIANCES (F-test)
-# H₁: Variance of satisfaction differs between emotion groups
-#------------------------------------------------------------------------------
+# 8.3 METHOD 2 - Compare VARIANCES (F-test)
+# ----------------------------------------------------------------------------
 
 cat("\n", rep("-", 60), "\n")
 cat("METHOD 2: COMPARING VARIANCES (F-test)\n")
@@ -1017,50 +1017,41 @@ cat(rep("-", 60), "\n")
 var_test <- var.test(high_emo_sat, low_emo_sat)
 
 cat("\nGroup Variances:\n")
-cat("  High Emotion Group variance =", round(var(high_emo_sat), 4), "\n")
-cat("  Low Emotion Group variance  =", round(var(low_emo_sat), 4), "\n")
-cat("  Ratio (High/Low) =", round(var(high_emo_sat)/var(low_emo_sat), 3), "\n")
+cat("  High Emotion Group variance =", round(var(high_emo_sat), 4), "\n")     # 0.4888
+cat("  Low Emotion Group variance  =", round(var(low_emo_sat), 4), "\n")      # 0.4314
+cat("  Ratio (High/Low) =", round(var(high_emo_sat)/var(low_emo_sat), 3), "\n") # 1.133
 
 cat("\n▶ F-test Results:\n")
-cat("  F-statistic =", round(var_test$statistic, 3), "\n")
-cat("  numerator df =", var_test$parameter[1], "\n")
-cat("  denominator df =", var_test$parameter[2], "\n")
-cat("  p-value =", round(var_test$p.value, 4), "\n")
+cat("  F-statistic =", round(var_test$statistic, 3), "\n")        # F-statistic = 1.133
+cat("  numerator df =", var_test$parameter[1], "\n")             # numerator df = 751
+cat("  denominator df =", var_test$parameter[2], "\n")           # denominator df = 747
+cat("  p-value =", round(var_test$p.value, 4), "\n")              # p-value = 0.0877
 
 if(var_test$p.value < 0.05) {
   cat("\n✓ VARIANCES TEST: Satisfaction variance differs significantly between groups\n")
-  if(var(high_emo_sat) > var(low_emo_sat)) {
-    cat("  High Emotion group has MORE variable satisfaction\n")
-  } else {
-    cat("  High Emotion group has MORE CONSISTENT satisfaction\n")
-  }
 } else {
   cat("\n✗ VARIANCES TEST: No significant difference in variances\n")
-  cat("  Both groups have similar consistency in satisfaction\n")
 }
+# ✗ VARIANCES TEST: No significant difference in variances
 
-#------------------------------------------------------------------------------
-# Step 4: METHOD 3 - Compare PROPORTIONS (z-test)
-# First, create binary satisfaction variable if not exists
-#------------------------------------------------------------------------------
+# 8.4 METHOD 3 - Compare PROPORTIONS (z-test)
+# ----------------------------------------------------------------------------
 
 cat("\n", rep("-", 60), "\n")
 cat("METHOD 3: COMPARING PROPORTIONS (z-test)\n")
 cat(rep("-", 60), "\n")
 
-# Create binary satisfaction if not already done
-if(!"satisfied" %in% names(movie_1500)) {
-  sat_median <- median(movie_1500$satisfaction)
-  movie_1500 <- movie_1500 %>%
-    mutate(
-      satisfied = ifelse(satisfaction > sat_median, 1, 0)
-    )
-}
+# Create binary satisfaction
+sat_median <- median(movie_1500$satisfaction)
+movie_1500 <- movie_1500 %>%
+  mutate(satisfied = ifelse(satisfaction > sat_median, 1, 0))
 
 # Create contingency table
 prop_table <- table(movie_1500$emotion_level, movie_1500$satisfied)
 colnames(prop_table) <- c("Not Satisfied", "Satisfied")
-print(prop_table)
+#                     Not Satisfied Satisfied
+# High Emotion           365       387
+# Low Emotion            394       354
 
 # Calculate proportions
 props <- movie_1500 %>%
@@ -1073,31 +1064,31 @@ props <- movie_1500 %>%
 
 cat("\nProportions Satisfied by Emotion Group:\n")
 print(props)
+# emotion_level   n  satisfied_count proportion
+# High Emotion  752             387      0.515
+# Low Emotion   748             354      0.473
 
 # Two-proportions z-test
-prop_test <- prop.test(prop_table, alternative = "greater")  # Testing if high > low
+prop_test <- prop.test(prop_table, alternative = "greater")
 
 cat("\n▶ Two-Proportions Test Results:\n")
-cat("  X-squared =", round(prop_test$statistic, 3), "\n")
-cat("  df =", prop_test$parameter, "\n")
-cat("  p-value =", round(prop_test$p.value, 4), "\n")
+cat("  X-squared =", round(prop_test$statistic, 3), "\n")        # X-squared = 2.404
+cat("  df =", prop_test$parameter, "\n")                         # df = 1
+cat("  p-value =", round(prop_test$p.value, 4), "\n")            # p-value = 0.9395
 
-# Calculate difference in proportions
 prop_diff <- props$proportion[props$emotion_level == "High Emotion"] - 
   props$proportion[props$emotion_level == "Low Emotion"]
-cat("  Difference in proportions =", round(prop_diff, 4), "\n")
+cat("  Difference in proportions =", round(prop_diff, 4), "\n")   # Difference = 0.0414
 
 if(prop_test$p.value < 0.05) {
   cat("\n✓ PROPORTIONS TEST: High Emotion group has significantly HIGHER satisfaction rate\n")
-  cat("  This SUPPORTS your hypothesis!\n")
 } else {
   cat("\n✗ PROPORTIONS TEST: No significant difference in satisfaction rates\n")
-  cat("  This does NOT support your hypothesis\n")
 }
+# ✗ PROPORTIONS TEST: No significant difference in satisfaction rates
 
-#------------------------------------------------------------------------------
-# Step 5: SUMMARY OF ALL METHODS
-#------------------------------------------------------------------------------
+# 8.5 SUMMARY OF ALL METHODS
+# ----------------------------------------------------------------------------
 
 cat("\n", rep("=", 80), "\n")
 cat("SUMMARY: TESTING MAIN HYPOTHESIS - ALL METHODS\n")
@@ -1107,10 +1098,10 @@ summary_multiple <- data.frame(
   Method = c("Regression", "Means (t-test)", "Variances (F-test)", "Proportions (z-test)"),
   What_It_Tests = c("Linear relationship", "Difference in averages", 
                     "Difference in consistency", "Difference in satisfaction rate"),
-  P_value = c(0.153, round(t_test_means$p.value, 4), 
+  P_value = c(round(emo_p_raw, 4), round(t_test_means$p.value, 4), 
               round(var_test$p.value, 4), round(prop_test$p.value, 4)),
   Supports_Hypothesis = c(
-    ifelse(0.153 < 0.05, "YES", "NO"),
+    ifelse(emo_p_raw < 0.05, "YES", "NO"),
     ifelse(t_test_means$p.value < 0.05, "YES", "NO"),
     ifelse(var_test$p.value < 0.05, "YES", "NO"),
     ifelse(prop_test$p.value < 0.05, "YES", "NO")
@@ -1118,54 +1109,56 @@ summary_multiple <- data.frame(
 )
 
 print(summary_multiple)
+# Method              What_It_Tests P_value Supports_Hypothesis
+# Regression          Linear relationship 0.0142                 YES
+# Means (t-test)      Difference in averages 0.4000                  NO
+# Variances (F-test)  Difference in consistency 0.0877                  NO
+# Proportions (z-test) Difference in satisfaction rate 0.9395                  NO
 
 cat("\n", rep("-", 60), "\n")
 cat("OVERALL CONCLUSION:\n")
 
-if(all(summary_multiple$P_value > 0.05)) {
+sig_count <- sum(summary_multiple$Supports_Hypothesis == "YES")
+
+if(sig_count == 0) {
   cat("  ALL methods show NO significant relationship.\n")
   cat("  STRONG evidence that emotional connection does NOT predict satisfaction.\n")
-} else if(sum(summary_multiple$P_value < 0.05) == 1) {
+} else if(sig_count == 1) {
   cat("  Only ONE method shows significance.\n")
   cat("  Weak/Inconsistent evidence - likely no real relationship.\n")
-} else if(sum(summary_multiple$P_value < 0.05) >= 2) {
+} else if(sig_count >= 2) {
   cat("  Multiple methods show significance.\n")
   cat("  Evidence suggests emotional connection MAY affect satisfaction.\n")
 }
-
-cat("\n", rep("=", 80), "\n")
+# Only ONE method shows significance - Weak/Inconsistent evidence
 
 # Boxplot showing the variance difference
-ggplot(movie_1500, aes(x = emotion_level, y = satisfaction, fill = emotion_level)) +
+p17 <- ggplot(movie_1500, aes(x = emotion_level, y = satisfaction, fill = emotion_level)) +
   geom_boxplot() +
   labs(title = "Satisfaction Distribution by Emotional Connection Level",
-       subtitle = paste("Variance difference p = 0.0001"),
+       subtitle = paste("Variance difference p =", round(var_test$p.value, 4)),
        x = "Emotional Connection Group", 
        y = "Satisfaction") +
   theme_minimal()
-
+ggsave("satisfaction_by_emotion_variance.png", p17, width = 8, height = 5)
 
 # ============================================================================
-# PART C: PROBABILITY DISTRIBUTIONS FOR MAIN HYPOTHESIS (LO1 & LO4)
-# Testing: "Audiences who feel emotionally connected report higher satisfaction"
-# Under demographic controls (age, gender)
+# 9. PROBABILITY DISTRIBUTIONS FOR MAIN HYPOTHESIS
 # ============================================================================
 
-cat("\n", rep("=", 80), "\n")
-cat("PART C: PROBABILITY DISTRIBUTIONS FOR MAIN HYPOTHESIS\n")
-cat(rep("=", 80), "\n")
+cat("\n==================================================\n")
+cat("PROBABILITY DISTRIBUTIONS FOR MAIN HYPOTHESIS\n")
+cat("==================================================\n")
 
-#------------------------------------------------------------------------------
-# 1. Test NORMAL Distribution Assumption (Your Current Model)
-#------------------------------------------------------------------------------
+# 9.1 Test NORMAL Distribution Assumption
+# ----------------------------------------------------------------------------
 
 cat("\n--- 1. NORMAL Distribution Assumption ---\n")
 
-# Your current model assumes Normal distribution
-model_normal <- lm(satisfaction ~ emotional_connection + age + gender_male + gender_other, 
+model_normal <- lm(satisfaction ~ emotional_intensity + age + gender_male + gender_other, 
                    data = movie_1500)
 
-# Check if residuals are Normal (this tests the assumption)
+# Check if residuals are Normal
 residuals_normal <- residuals(model_normal)
 shapiro_test_normal <- shapiro.test(residuals_normal)
 
@@ -1183,17 +1176,16 @@ if(shapiro_test_normal$p.value > 0.05) {
 aic_normal <- AIC(model_normal)
 cat("\nNormal Model AIC:", round(aic_normal, 2), "\n")
 
-#------------------------------------------------------------------------------
-# 2. Test GAMMA Distribution (for positive, skewed data)
-#------------------------------------------------------------------------------
+# 9.2 Test GAMMA Distribution (for positive, skewed data)
+# ----------------------------------------------------------------------------
 
 cat("\n--- 2. GAMMA Distribution Assumption ---\n")
 
 # Gamma GLM (log link ensures positive predictions)
-model_gamma <- glm(satisfaction ~ emotional_connection + age + gender_male + gender_other, 
+model_gamma <- glm(satisfaction ~ emotional_intensity + age + gender_male + gender_other, 
                    family = Gamma(link = "log"), data = movie_1500)
 
-# Check deviance residuals (should be approximately Normal)
+# Check deviance residuals
 residuals_gamma <- residuals(model_gamma, type = "deviance")
 shapiro_test_gamma <- shapiro.test(residuals_gamma)
 
@@ -1205,26 +1197,16 @@ cat("  p-value =", round(shapiro_test_gamma$p.value, 4), "\n")
 aic_gamma <- AIC(model_gamma)
 cat("\nGamma Model AIC:", round(aic_gamma, 2), "\n")
 
-#------------------------------------------------------------------------------
-# 3. Test BINOMIAL Distribution (for binary satisfaction)
-#------------------------------------------------------------------------------
+# 9.3 Test BINOMIAL Distribution (for binary satisfaction)
+# ----------------------------------------------------------------------------
 
 cat("\n--- 3. BINOMIAL Distribution Assumption ---\n")
 
-# Create binary satisfaction if not exists
-if(!"satisfied" %in% names(movie_1500)) {
-  sat_median <- median(movie_1500$satisfaction)
-  movie_1500$satisfied <- ifelse(movie_1500$satisfaction > sat_median, 1, 0)
-}
-
 # Binomial GLM (logistic regression)
-model_binomial <- glm(satisfied ~ emotional_connection + age + gender_male + gender_other, 
+model_binomial <- glm(satisfied ~ emotional_intensity + age + gender_male + gender_other, 
                       family = binomial, data = movie_1500)
 
-# Check Hosmer-Lemeshow goodness of fit
-if(!require(ResourceSelection)) install.packages("ResourceSelection")
-library(ResourceSelection)
-
+# Hosmer-Lemeshow goodness of fit
 hl_test <- hoslem.test(model_binomial$y, fitted(model_binomial), g = 10)
 
 cat("\nHosmer-Lemeshow Goodness-of-Fit:\n")
@@ -1241,9 +1223,8 @@ if(hl_test$p.value > 0.05) {
 aic_binomial <- AIC(model_binomial)
 cat("\nBinomial Model AIC:", round(aic_binomial, 2), "\n")
 
-#------------------------------------------------------------------------------
-# 4. Compare All Distributions
-#------------------------------------------------------------------------------
+# 9.4 Compare All Distributions
+# ----------------------------------------------------------------------------
 
 cat("\n", rep("-", 60), "\n")
 cat("DISTRIBUTION COMPARISON FOR MAIN HYPOTHESIS\n")
@@ -1264,34 +1245,33 @@ print(comparison)
 cat("\nBest fitting distribution (lowest AIC):", 
     comparison$Distribution[which.min(comparison$AIC)], "\n")
 
-#------------------------------------------------------------------------------
-# 5. Does the Relationship Hold Under Different Distributions?
-#------------------------------------------------------------------------------
+# 9.5 Main Hypothesis Under Different Distributions
+# ----------------------------------------------------------------------------
 
 cat("\n", rep("-", 60), "\n")
 cat("MAIN HYPOTHESIS UNDER DIFFERENT DISTRIBUTIONS\n")
 cat(rep("-", 60), "\n")
 
-# Extract emotional_connection coefficient and p-value from each model
+# Extract emotional_intensity coefficient and p-value from each model
 results_dist <- data.frame(
   Distribution = c("Normal", "Gamma", "Binomial"),
-  Emotional_Connection_Effect = c(
-    paste0(round(coef(model_normal)["emotional_connection"], 4), 
-           ifelse(summary(model_normal)$coefficients["emotional_connection", 4] < 0.05, "*", "")),
-    paste0(round(coef(model_gamma)["emotional_connection"], 4), 
-           ifelse(summary(model_gamma)$coefficients["emotional_connection", 4] < 0.05, "*", "")),
-    paste0(round(coef(model_binomial)["emotional_connection"], 4), 
-           ifelse(summary(model_binomial)$coefficients["emotional_connection", 4] < 0.05, "*", ""))
+  emotional_intensity_Effect = c(
+    paste0(round(coef(model_normal)["emotional_intensity"], 4), 
+           ifelse(summary(model_normal)$coefficients["emotional_intensity", 4] < 0.05, "*", "")),
+    paste0(round(coef(model_gamma)["emotional_intensity"], 4), 
+           ifelse(summary(model_gamma)$coefficients["emotional_intensity", 4] < 0.05, "*", "")),
+    paste0(round(coef(model_binomial)["emotional_intensity"], 4), 
+           ifelse(summary(model_binomial)$coefficients["emotional_intensity", 4] < 0.05, "*", ""))
   ),
   P_value = c(
-    round(summary(model_normal)$coefficients["emotional_connection", 4], 4),
-    round(summary(model_gamma)$coefficients["emotional_connection", 4], 4),
-    round(summary(model_binomial)$coefficients["emotional_connection", 4], 4)
+    round(summary(model_normal)$coefficients["emotional_intensity", 4], 4),
+    round(summary(model_gamma)$coefficients["emotional_intensity", 4], 4),
+    round(summary(model_binomial)$coefficients["emotional_intensity", 4], 4)
   ),
   Significant = c(
-    summary(model_normal)$coefficients["emotional_connection", 4] < 0.05,
-    summary(model_gamma)$coefficients["emotional_connection", 4] < 0.05,
-    summary(model_binomial)$coefficients["emotional_connection", 4] < 0.05
+    summary(model_normal)$coefficients["emotional_intensity", 4] < 0.05,
+    summary(model_gamma)$coefficients["emotional_intensity", 4] < 0.05,
+    summary(model_binomial)$coefficients["emotional_intensity", 4] < 0.05
   )
 )
 
@@ -1307,5 +1287,25 @@ if(all(!results_dist$Significant)) {
   cat("  This suggests the relationship depends on distributional assumptions.\n")
 }
 
+# ============================================================================
+# 10. FINAL SUMMARY
+# ============================================================================
 
+cat("\n==================================================\n")
+cat("FINAL ANALYSIS SUMMARY\n")
+cat("==================================================\n")
 
+cat("\nKey Findings:\n")
+cat("1. Emotional Intensity mean =", round(mean(movie_1500$emotional_intensity), 2), 
+    "(SD =", round(sd(movie_1500$emotional_intensity), 2), ")\n")
+cat("2. Satisfaction mean =", round(mean(movie_1500$satisfaction), 2), 
+    "(SD =", round(sd(movie_1500$satisfaction), 2), ")\n")
+cat("3. Correlation between Emotional Intensity and Satisfaction: r =", 
+    round(cor_test$estimate, 3), "(p =", round(cor_test$p.value, 4), ")\n")
+cat("4. Regression (with controls): β =", round(emo_coef_std, 3), 
+    "(p =", round(emo_p_std, 4), ")\n")
+cat("5. Best fitting distribution:", comparison$Distribution[which.min(comparison$AIC)], "\n")
+
+cat("\n==================================================\n")
+cat("ANALYSIS COMPLETE\n")
+cat("==================================================\n")
