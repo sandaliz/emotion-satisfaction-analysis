@@ -39,10 +39,8 @@ The project implements three levels of statistical analysis as required by the a
 
 ## 📥 Data Sources
 - Dataset 1:Movies - https://www.kaggle.com/datasets/sayeeduddin/netflix-2025user-behavior-dataset-210k-records
-- Dataset 2: Social Media - 
+- Dataset 2: Social Media -  https://www.kaggle.com/datasets/omenkj/social-media-sponsorship-and-engagement-dataset
 - Dataset 3: Music - https://www.projects.science.uu.nl/memotion/emotifydata/
-- Dataset 4: https://www.kaggle.com/datasets/omenkj/social-media-sponsorship-and-engagement-dataset
+  
 
-
-Population difference analysis
 
