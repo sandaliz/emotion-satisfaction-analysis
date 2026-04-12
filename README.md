@@ -5,7 +5,7 @@ This repository contains the complete statistical analysis for validating the re
 
 ## Research Statement
 "Audiences who feel emotionally connected to content report higher satisfaction."
-Domain: Entertainment
+- Domain: Entertainment
 
 ## Key Research Questions
 - Does emotional connection significantly predict satisfaction across different entertainment activities?
