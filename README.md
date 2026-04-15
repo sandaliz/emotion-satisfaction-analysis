@@ -127,6 +127,14 @@ emotion-satisfaction-analysis/
 └── README.md
 ```
 
+## Group Project Contributions
+This project was completed as an academic group project as part of a module on statistical analysis. My contribution focused on:
+- Music dataset analysis (music_analisis.R)
+- Descriptive statistics and visualization for music data
+- Inferential analysis including correlation, t-tests, and regression
+- Emotional intensity and sentiment analysis
+- Integration with combined meta-analysis
+
 ## Visualization Examples
 
 ### Combined Analysis Results
